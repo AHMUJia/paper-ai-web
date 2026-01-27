@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>智能论文整理与 PubMed 校验系统</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lucide-static@0.321.0/font/lucide.min.css">
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="card">
+        <header>
+          <h1>智能论文整理与 PubMed 校验系统</h1>
+          <p>一键规范化文献列表 · 自动补全 PubMed 信息 · 支持标准投稿格式导出</p>
+        </header>
+
+        <div class="progress" aria-label="workflow">
+          <div class="progress-track">
+            <div class="progress-step active" id="stepParse">
+              <span class="icon" aria-hidden="true">1</span>
+              <span>解析文档</span>
+            </div>
+            <div class="progress-connector" aria-hidden="true"></div>
+            <div class="progress-step" id="stepPubmed">
+              <span class="icon" aria-hidden="true">2</span>
+              <span>PubMed 校验</span>
+            </div>
+            <div class="progress-connector" aria-hidden="true"></div>
+            <div class="progress-step" id="stepExport">
+              <span class="icon" aria-hidden="true">3</span>
+              <span>导出结果</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <div class="toolbar-row">
+            <div class="input-group">
+              <i class="lucide-file-text"></i>
+              <label for="docxFile" style="display:none">上传论文文件</label>
+              <button id="pickFileBtn" class="btn-mini" type="button">选择文件</button>
+              <span id="fileNameText" class="file-name">未选择任何文件</span>
+              <input id="docxFile" type="file" accept=".docx,.doc,.txt" style="display:none" />
+            </div>
+            <button id="sampleBtn" class="button ghost" type="button">
+              <i class="lucide-file-text"></i> 加载示例文件
+            </button>
+            <button id="parseBtn" class="button">
+              <i class="lucide-upload"></i> 第一步：解析文档
+            </button>
+            <button id="pubmedBtn" class="button secondary" disabled>
+              <i class="lucide-search"></i> 第二步：PubMed 补全
+            </button>
+          </div>
+
+          <div class="toolbar-row">
+            <div class="input-group">
+              <i class="lucide-layout"></i>
+              <label for="metricMode" style="display:none">指标显示方式</label>
+              <select id="metricMode">
+                <option value="published">按发表年份指标</option>
+                <option value="latest">按最新年份指标</option>
+              </select>
+            </div>
+            <button id="sortYearBtn" class="button ghost">按年份排序</button>
+            <button id="sortImpactBtn" class="button ghost">按影响因子排序</button>
+            <button id="toggleAllBtn" class="button ghost">全选/全不选</button>
+            <button id="exportBtn" class="button cta">
+              <i class="lucide-download"></i> 导出整理后论文格式
+            </button>
+          </div>
+          <div class="status" id="statusText" style="display:none">正在加载内置指标表...</div>
+        </div>
+
+        <div id="aiHint" class="ai-hint" style="display:none">
+          <i class="lucide-bot" style="font-size:20px; margin-top:2px"></i>
+          <div>
+            <div class="title">AI 摘要</div>
+            <div class="desc" id="aiHintText">AI 已自动识别并规范化 0 篇文献（PubMed 匹配率 0%）。</div>
+          </div>
+        </div>
+
+        <div id="paperList" class="list"></div>
+
+        <div class="footer">
+          <p><i class="lucide-info"></i> 提示：系统会自动匹配影响因子与分区，PubMed 补全后可获取完整作者名单并自动标注共同一作/通讯。</p>
+        </div>
+      </section>
+
+      <footer class="site-footer" aria-label="copyright">
+        <img class="site-footer-logo" src="logo.png" alt="Uro-Explorers Logo" />
+        <div class="site-footer-text">版权所有：Uro-Explorers科研小组</div>
+      </footer>
+    </main>
+
+    <script defer src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script defer src="app.js"></script>
+  </body>
+</html>
