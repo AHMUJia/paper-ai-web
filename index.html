@@ -83,6 +83,22 @@
 
         <div id="paperList" class="list"></div>
 
+        <!-- 作者标注模态框 -->
+        <div id="authorEditModal" class="modal" style="display:none;">
+          <div class="modal-backdrop" data-action="closeAuthorModal"></div>
+          <div class="modal-content">
+            <div class="modal-header">
+              <h2>标注共一/共通讯作者</h2>
+              <button class="modal-close" data-action="closeAuthorModal" aria-label="关闭">
+                <i class="lucide-x"></i>
+              </button>
+            </div>
+            <div class="modal-body" id="authorEditModalBody">
+              <!-- 内容由 JavaScript 动态填充 -->
+            </div>
+          </div>
+        </div>
+
         <div class="footer">
           <p><i class="lucide-info"></i> 提示：系统会自动匹配影响因子与分区，PubMed 补全后可获取完整作者名单并自动标注共同一作/通讯。</p>
         </div>

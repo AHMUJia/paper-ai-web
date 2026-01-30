@@ -17,6 +17,8 @@ const state = {
     authorDraft: new Map(),
     pubmedManualOpen: new Set(),
     pubmedManualValue: new Map(),
+    journalEditOpen: new Set(),
+    journalDraft: new Map(),
     sampleDocx: null, // { name: string, buffer: ArrayBuffer }
   }
 };
@@ -42,6 +44,8 @@ const elements = {
   stepPubmed: document.getElementById("stepPubmed"),
   stepExport: document.getElementById("stepExport"),
   progressMeta: document.getElementById("progressMeta"),
+  authorEditModal: document.getElementById("authorEditModal"),
+  authorEditModalBody: document.getElementById("authorEditModalBody"),
 };
 
 function computeAiStats() {
@@ -132,13 +136,31 @@ async function decodeTextFromBuffer(buffer) {
   return (tryDecode("gbk") || tryDecode("gb18030") || tryDecode("utf-8") || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 }
 
-const SAMPLE_DOCX_URL = "测试1.docx";
+const SAMPLE_DOCX_URL = "./测试1.docx";
+
+// 获取相对于当前 HTML 文件的路径
+function getResourcePath(filename) {
+  // 如果已经有路径前缀，直接返回
+  if (filename.startsWith("./") || filename.startsWith("../") || filename.startsWith("/") || filename.includes("://")) {
+    return filename;
+  }
+  // 否则添加 ./ 前缀，表示相对于当前 HTML 文件
+  return "./" + filename;
+}
 
 async function loadTextFromUrl(url) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`无法加载 ${url}`);
-  const buffer = await response.arrayBuffer();
-  return decodeTextFromBuffer(buffer);
+  const fullUrl = getResourcePath(url);
+  try {
+    const response = await fetch(fullUrl);
+    if (!response.ok) {
+      throw new Error(`无法加载 ${fullUrl} (HTTP ${response.status})`);
+    }
+    const buffer = await response.arrayBuffer();
+    return decodeTextFromBuffer(buffer);
+  } catch (error) {
+    console.error(`加载文件失败: ${fullUrl}`, error);
+    throw new Error(`无法加载 ${fullUrl}: ${error.message}`);
+  }
 }
 
 function parseImpactTxt(text) {
@@ -224,18 +246,20 @@ async function extractDocxTextFromArrayBuffer(data) {
 async function loadSampleDocx(options = {}) {
   const { silent = false } = options;
   try {
-    if (!silent) updateStatus(`正在加载示例文档：${SAMPLE_DOCX_URL} ...`);
+    const docxUrl = getResourcePath(SAMPLE_DOCX_URL);
+    if (!silent) updateStatus(`正在加载示例文档：${docxUrl} ...`);
 
-    const resp = await fetch(SAMPLE_DOCX_URL);
+    const resp = await fetch(docxUrl);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const buf = await resp.arrayBuffer();
 
     // 仅“选择”示例，不解析；解析由“解析文档”按钮触发
-    state.ui.sampleDocx = { name: SAMPLE_DOCX_URL, buffer: buf };
+    const displayName = docxUrl.replace(/^\.\//, ""); // 移除 ./ 前缀用于显示
+    state.ui.sampleDocx = { name: displayName, buffer: buf };
     if (elements.docxFile) elements.docxFile.value = "";
-    setChosenFileName(SAMPLE_DOCX_URL);
+    setChosenFileName(displayName);
 
-    if (!silent) updateStatus(`已选择示例文档：${SAMPLE_DOCX_URL}（点击“解析文档”开始解析）`);
+    if (!silent) updateStatus(`已选择示例文档：${displayName}（点击“解析文档”开始解析）`);
     return true;
   } catch (e) {
     console.warn("loadSampleDocx failed", e);
@@ -452,6 +476,59 @@ function formatAuthorsWithMarkers(authors, coFirst, coCorresponding) {
   }).join(", ");
 }
 
+function renderAuthorModal(paperId) {
+  const paper = state.papers.find(p => p.id === paperId);
+  if (!paper || !state.ui.authorEditOpen.has(paperId)) {
+    if (elements.authorEditModal) elements.authorEditModal.style.display = "none";
+    return;
+  }
+  
+  const draft = state.ui.authorDraft.get(paperId);
+  if (!draft) return;
+  
+  const rows = draft.baseAuthors.map((name, idx) => {
+    const key = normalizeForMatch(name);
+    const cf = draft.coFirstSet.has(key) ? "checked" : "";
+    const cc = draft.coCorrSet.has(key) ? "checked" : "";
+    return `<div class="author-editor-row">
+      <div class="author-editor-name">${escapeHtml(name)}</div>
+      <div class="author-editor-flags">
+        <label class="author-editor-flag">
+          <input type="checkbox" data-action="authorFlag" data-id="${paperId}" data-role="cofirst" data-idx="${idx}" ${cf} />
+          <span>共一</span>
+        </label>
+        <label class="author-editor-flag">
+          <input type="checkbox" data-action="authorFlag" data-id="${paperId}" data-role="cocorr" data-idx="${idx}" ${cc} />
+          <span>通讯</span>
+        </label>
+      </div>
+    </div>`;
+  }).join("");
+  
+  const modalHtml = `
+    <div class="author-editor-head">
+      <p><strong>${escapeHtml(paper.title || "论文标题")}</strong></p>
+      <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">勾选需要标注的作者（蓝色 # / * 会显示在名单中）</p>
+    </div>
+    <div class="author-editor-grid">${rows}</div>
+    <div class="author-editor-actions">
+      <button class="button" data-action="saveAuthorEdit" data-id="${paperId}">
+        <i class="lucide-check"></i> 保存
+      </button>
+      <button class="button ghost" data-action="cancelAuthorEdit" data-id="${paperId}">
+        <i class="lucide-x"></i> 取消
+      </button>
+    </div>
+  `;
+  
+  if (elements.authorEditModalBody) {
+    elements.authorEditModalBody.innerHTML = modalHtml;
+  }
+  if (elements.authorEditModal) {
+    elements.authorEditModal.style.display = "";
+  }
+}
+
 function render() {
   if (!state.papers.length) {
     elements.paperList.innerHTML = `<div class="empty"><i class="lucide-file-x-2"></i><p>请上传论文 docx 或从浏览器本地加载数据。</p></div>`;
@@ -475,18 +552,8 @@ function render() {
 
     const canMarkAuthors = Boolean(paper.pubmed?.fullAuthors?.length);
     const isEditingAuthors = canMarkAuthors && state.ui.authorEditOpen.has(paper.id);
-
-    let editorHtml = "";
-    if (isEditingAuthors) {
-      const draft = state.ui.authorDraft.get(paper.id);
-      const rows = draft.baseAuthors.map((name, idx) => {
-        const key = normalizeForMatch(name);
-        const cf = draft.coFirstSet.has(key) ? "checked" : "";
-        const cc = draft.coCorrSet.has(key) ? "checked" : "";
-        return `<div class="author-editor-row"><div class="author-editor-name">${escapeHtml(name)}</div><label class="author-editor-flag"><input type="checkbox" data-action="authorFlag" data-id="${paper.id}" data-role="cofirst" data-idx="${idx}" ${cf} />共一</label><label class="author-editor-flag"><input type="checkbox" data-action="authorFlag" data-id="${paper.id}" data-role="cocorr" data-idx="${idx}" ${cc} />通讯</label></div>`;
-      }).join("");
-      editorHtml = `<div class="author-editor"><div class="author-editor-head">勾选需要标注的作者（蓝色 # / * 会显示在名单中）</div><div class="author-editor-grid">${rows}</div><div class="author-editor-actions"><button class="btn-mini" data-action="saveAuthorEdit" data-id="${paper.id}">保存</button><button class="btn-mini" data-action="cancelAuthorEdit" data-id="${paper.id}">取消</button></div></div>`;
-    }
+    const isEditingJournal = state.ui.journalEditOpen.has(paper.id);
+    const journalDraft = state.ui.journalDraft.get(paper.id) || paper.journal || "";
 
     const hasPubmedError = !isEnriched && paper.pubmed?.error;
     const manualOpen = !isEnriched && state.ui.pubmedManualOpen.has(paper.id);
@@ -511,7 +578,10 @@ function render() {
           <button class="btn-mini" data-action="openPubmedSearch" data-id="${paper.id}"><i class="lucide-search"></i> 打开 PubMed 搜索</button>
           <button class="btn-mini" data-action="toggleManualPmid" data-id="${paper.id}"><i class="lucide-link"></i> 手动指定PubMed</button>
         </div>`;
-    } else if (isEnriched) {
+    } else if (isEnriched && canMarkAuthors) {
+      extraActions = `<div class="meta-line" style="margin-top:8px"><button class="btn-mini" data-action="markAuthors" data-id="${paper.id}"><i class="lucide-user-cog"></i> ${isEditingAuthors ? "收起标注" : "标注共一/共通讯"}</button></div>`;
+    } else if (isEnriched && paper.authors) {
+      // 即使没有 fullAuthors，如果有 authors 字符串，也允许标注
       extraActions = `<div class="meta-line" style="margin-top:8px"><button class="btn-mini" data-action="markAuthors" data-id="${paper.id}"><i class="lucide-user-cog"></i> ${isEditingAuthors ? "收起标注" : "标注共一/共通讯"}</button></div>`;
     }
 
@@ -530,14 +600,23 @@ function render() {
                 <div class="paper-authors">${paper.authors || "(作者列表待补全)"}</div>
                 <div class="meta-line">
                   <span><i class="lucide-calendar" style="font-size:12px"></i> 年份：${paper.year || "-"}</span>
-                  <span><i class="lucide-book-open" style="font-size:12px"></i> 期刊：${paper.journal || "-"}</span>
+                  <span><i class="lucide-book-open" style="font-size:12px"></i> 期刊：
+                    ${isEditingJournal ? `
+                      <span style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                        <input type="text" value="${escapeHtml(journalDraft)}" data-action="journalInput" data-id="${paper.id}" class="journal-edit-input" autofocus />
+                        <button class="btn-mini" data-action="saveJournalEdit" data-id="${paper.id}"><i class="lucide-check" style="font-size:12px"></i> 保存</button>
+                        <button class="btn-mini" data-action="cancelJournalEdit" data-id="${paper.id}"><i class="lucide-x" style="font-size:12px"></i> 取消</button>
+                      </span>
+                    ` : `
+                      <span class="journal-name-editable" data-action="editJournal" data-id="${paper.id}" title="点击编辑期刊名称">${escapeHtml(paper.journal || "-")}</span>
+                    `}
+                  </span>
                   <span><i class="lucide-hash" style="font-size:12px"></i> PMID：${pmidText}</span>
                 </div>
               </div>
               ${hasPubmedError ? `<div class="paper-meta" style="color:var(--fail); font-size:13px; margin-top:4px">${escapeHtml(paper.pubmed.error)}</div>` : ""}
               ${extraActions}
               ${manualBlock}
-              ${editorHtml}
             ` : ""}
           </div>
 
@@ -756,8 +835,8 @@ async function exportSelected() {
     if (paper.paperType) meta.push(`[${paper.paperType}]`);
     if (paper.myAuthorRole) meta.push(paper.myAuthorRole);
     if (m.impactFactor) meta.push(`IF=${m.impactFactor}`);
-    if (m.casZone) meta.push(`中科院${m.casZone}区`);
     if (m.jcrZone) meta.push(`JCR ${m.jcrZone}区`);
+    if (m.casZone) meta.push(`中科院${m.casZone}区`);
     if (m.casTop) meta.push("Top期刊");
     const title = ensureTitleEndingPunctuation(paper.title);
     return `${authors ? authors + "." : ""} ${title} ${paper.journal || ""}, ${paper.year || ""}${paper.volumeIssuePages ? ", " + paper.volumeIssuePages : ""}. ${meta.length ? "(" + meta.join(", ") + ")" : ""}`;
@@ -889,38 +968,135 @@ elements.toggleAllBtn.addEventListener("click", () => {
 });
 elements.exportBtn.addEventListener("click", exportSelected);
 
+// 处理模态框内的事件
+if (elements.authorEditModal) {
+  elements.authorEditModal.addEventListener("click", e => {
+    const actionEl = e.target.closest("[data-action]"); const action = actionEl?.dataset?.action; const id = actionEl?.dataset?.id;
+    
+    // 处理复选框点击
+    if (action === "authorFlag" && id) {
+      const draft = state.ui.authorDraft.get(id); 
+      if (!draft) return;
+      const idx = Number(actionEl.dataset.idx); 
+      const role = actionEl.dataset.role;
+      const key = normalizeForMatch(draft.baseAuthors[idx]);
+      if (role === "cofirst") { 
+        if (actionEl.checked) draft.coFirstSet.add(key); 
+        else draft.coFirstSet.delete(key); 
+      } else { 
+        if (actionEl.checked) draft.coCorrSet.add(key); 
+        else draft.coCorrSet.delete(key); 
+      }
+      const p = state.papers.find(x => x.id === id);
+      if (p && draft) {
+        const cf = draft.baseAuthors.filter(n => draft.coFirstSet.has(normalizeForMatch(n)));
+        const cc = draft.baseAuthors.filter(n => draft.coCorrSet.has(normalizeForMatch(n)));
+        p.authors = formatAuthorsWithMarkers(draft.baseAuthors, cf, cc);
+        renderAuthorModal(id);
+      }
+      e.stopPropagation();
+      return;
+    }
+    
+    // 处理保存按钮
+    if (action === "saveAuthorEdit" && id) {
+      const p = state.papers.find(x => x.id === id);
+      if (p) {
+        const draft = state.ui.authorDraft.get(id);
+        if (draft) {
+          const cf = draft.baseAuthors.filter(n => draft.coFirstSet.has(normalizeForMatch(n)));
+          const cc = draft.baseAuthors.filter(n => draft.coCorrSet.has(normalizeForMatch(n)));
+          p.authors = formatAuthorsWithMarkers(draft.baseAuthors, cf, cc);
+          p.pubmed = p.pubmed || {};
+          p.pubmed.coFirst = cf;
+          p.pubmed.coCorresponding = cc;
+        }
+      }
+      state.ui.authorEditOpen.delete(id);
+      state.ui.authorDraft.delete(id);
+      if (elements.authorEditModal) elements.authorEditModal.style.display = "none";
+      render();
+      e.stopPropagation();
+      return;
+    }
+    
+    // 处理取消按钮
+    if (action === "cancelAuthorEdit" && id) {
+      state.ui.authorEditOpen.delete(id);
+      state.ui.authorDraft.delete(id);
+      if (elements.authorEditModal) elements.authorEditModal.style.display = "none";
+      render();
+      e.stopPropagation();
+      return;
+    }
+    
+    // 处理关闭按钮
+    if (action === "closeAuthorModal") {
+      const openId = state.ui.authorEditOpen.values().next().value;
+      if (openId) {
+        state.ui.authorEditOpen.delete(openId);
+        state.ui.authorDraft.delete(openId);
+      }
+      if (elements.authorEditModal) elements.authorEditModal.style.display = "none";
+      render();
+      e.stopPropagation();
+      return;
+    }
+  });
+}
+
 elements.paperList.addEventListener("click", e => {
   const actionEl = e.target.closest("[data-action]"); const action = actionEl?.dataset?.action; const id = actionEl?.dataset?.id;
-  if (action === "toggleSelect" || e.target.closest(".paper")) {
-    const card = e.target.closest(".paper"); const cid = card.dataset.id;
+  // 处理选择逻辑：只有点击 paper 元素本身（不是按钮等交互元素）时才切换选择
+  if (action === "toggleSelect") {
+    const card = e.target.closest(".paper"); const cid = card?.dataset?.id;
     if (e.target.closest("button") || e.target.closest("input") || e.target.closest("select") || e.target.closest("a")) return;
-    if (state.selected.has(cid)) state.selected.delete(cid); else state.selected.add(cid);
+    if (cid && state.selected.has(cid)) state.selected.delete(cid); else if (cid) state.selected.add(cid);
     render(); return;
   }
+  // 处理其他 action（如 markAuthors 等）
   if (!action || !id) return;
   if (action === "markAuthors") {
     const p = state.papers.find(x => x.id === id); if (!p) return;
-    if (state.ui.authorEditOpen.has(id)) { state.ui.authorEditOpen.delete(id); state.ui.authorDraft.delete(id); }
-    else {
+    if (state.ui.authorEditOpen.has(id)) {
+      // 如果已经打开，则关闭
+      state.ui.authorEditOpen.delete(id);
+      state.ui.authorDraft.delete(id);
+      if (elements.authorEditModal) elements.authorEditModal.style.display = "none";
+    } else {
+      // 打开模态框
       state.ui.authorEditOpen.add(id);
       const authors = (p.pubmed?.fullAuthors?.length ? [...p.pubmed.fullAuthors] : (p.authors || "").replace(/<[^>]+>/g, "").split(",").map(s => s.trim().replace(/[#*]+$/g, "")).filter(Boolean));
       state.ui.authorDraft.set(id, { baseAuthors: authors, coFirstSet: new Set((p.pubmed?.coFirst || []).map(normalizeForMatch)), coCorrSet: new Set((p.pubmed?.coCorresponding || []).map(normalizeForMatch)) });
+      renderAuthorModal(id);
     }
     render(); return;
   }
-  if (action === "authorFlag") {
-    const draft = state.ui.authorDraft.get(id); const idx = Number(actionEl.dataset.idx); const role = actionEl.dataset.role;
-    const key = normalizeForMatch(draft.baseAuthors[idx]);
-    if (role === "cofirst") { if (actionEl.checked) draft.coFirstSet.add(key); else draft.coFirstSet.delete(key); }
-    else { if (actionEl.checked) draft.coCorrSet.add(key); else draft.coCorrSet.delete(key); }
-    const p = state.papers.find(x => x.id === id);
-    const cf = draft.baseAuthors.filter(n => draft.coFirstSet.has(normalizeForMatch(n)));
-    const cc = draft.baseAuthors.filter(n => draft.coCorrSet.has(normalizeForMatch(n)));
-    p.authors = formatAuthorsWithMarkers(draft.baseAuthors, cf, cc);
+  if (action === "editJournal") {
+    const p = state.papers.find(x => x.id === id); if (!p) return;
+    state.ui.journalEditOpen.add(id);
+    state.ui.journalDraft.set(id, p.journal || "");
     render(); return;
   }
-  if (action === "saveAuthorEdit" || action === "cancelAuthorEdit") {
-    state.ui.authorEditOpen.delete(id); state.ui.authorDraft.delete(id); render(); return;
+  if (action === "saveJournalEdit") {
+    const p = state.papers.find(x => x.id === id); if (!p) return;
+    const draft = state.ui.journalDraft.get(id) || "";
+    const newJournal = draft.trim();
+    if (newJournal) {
+      p.journal = newJournal;
+      // 重新计算指标
+      const metrics = resolveMetrics(p, state.metricMode);
+      p.metrics.published = metrics;
+      p.metrics.latest = resolveMetrics(p, "latest");
+    }
+    state.ui.journalEditOpen.delete(id);
+    state.ui.journalDraft.delete(id);
+    render(); return;
+  }
+  if (action === "cancelJournalEdit") {
+    state.ui.journalEditOpen.delete(id);
+    state.ui.journalDraft.delete(id);
+    render(); return;
   }
   if (action === "toggleManualPmid") {
     if (state.ui.pubmedManualOpen.has(id)) state.ui.pubmedManualOpen.delete(id);
@@ -956,13 +1132,81 @@ elements.paperList.addEventListener("click", e => {
 });
 
 elements.paperList.addEventListener("input", (e) => {
-  if (e.target.dataset.action === "manualPmidInput") state.ui.pubmedManualValue.set(e.target.dataset.id, e.target.value);
+  if (e.target.dataset.action === "manualPmidInput") {
+    state.ui.pubmedManualValue.set(e.target.dataset.id, e.target.value);
+  } else if (e.target.dataset.action === "journalInput") {
+    state.ui.journalDraft.set(e.target.dataset.id, e.target.value);
+  }
 });
+
+elements.paperList.addEventListener("keydown", (e) => {
+  if (e.target.dataset.action === "journalInput") {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const id = e.target.dataset.id;
+      const p = state.papers.find(x => x.id === id);
+      if (p) {
+        const draft = state.ui.journalDraft.get(id) || "";
+        const newJournal = draft.trim();
+        if (newJournal) {
+          p.journal = newJournal;
+          // 重新计算指标
+          const metrics = resolveMetrics(p, state.metricMode);
+          p.metrics.published = metrics;
+          p.metrics.latest = resolveMetrics(p, "latest");
+        }
+        state.ui.journalEditOpen.delete(id);
+        state.ui.journalDraft.delete(id);
+        render();
+      }
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      const id = e.target.dataset.id;
+      state.ui.journalEditOpen.delete(id);
+      state.ui.journalDraft.delete(id);
+      render();
+    }
+  }
+});
+
+// 模态框背景点击关闭处理（单独的事件监听器）
+if (elements.authorEditModal) {
+  // 点击背景关闭模态框
+  const backdrop = elements.authorEditModal.querySelector(".modal-backdrop");
+  if (backdrop) {
+    backdrop.addEventListener("click", (e) => {
+      const openId = state.ui.authorEditOpen.values().next().value;
+      if (openId) {
+        state.ui.authorEditOpen.delete(openId);
+        state.ui.authorDraft.delete(openId);
+      }
+      elements.authorEditModal.style.display = "none";
+      render();
+    });
+  }
+  
+  // ESC 键关闭模态框
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && elements.authorEditModal && elements.authorEditModal.style.display !== "none") {
+      const openId = state.ui.authorEditOpen.values().next().value;
+      if (openId) {
+        state.ui.authorEditOpen.delete(openId);
+        state.ui.authorDraft.delete(openId);
+      }
+      elements.authorEditModal.style.display = "none";
+      render();
+    }
+  });
+}
 
 async function loadBuiltinMetrics() {
   try {
     updateStatus("正在加载内置指标表...");
-    const [iT, cT, jT] = await Promise.all([loadTextFromUrl("影响因子.txt"), loadTextFromUrl("中科院分区.txt"), loadTextFromUrl("JCR分区.txt")]);
+    const [iT, cT, jT] = await Promise.all([
+      loadTextFromUrl("./影响因子.txt"), 
+      loadTextFromUrl("./中科院分区.txt"), 
+      loadTextFromUrl("./JCR分区.txt")
+    ]);
     state.datasets.impact = parseImpactTxt(iT); state.datasets.cas = parseZoneTxt(cT); state.datasets.jcr = parseZoneTxt(jT);
     const jNM = new Map(); const jNML = new Map();
     const add = (d) => { if (!d?.map) return; d.map.forEach((r, k) => { if (!jNM.has(k)) jNM.set(k, r._name || ""); const lK = normalizeJournalLoose(r._name || ""); if (lK && !jNML.has(lK)) jNML.set(lK, r._name || ""); }); };
@@ -982,3 +1226,4 @@ async function loadBuiltinMetrics() {
   setChosenFileName("");
   await loadBuiltinMetrics();
 })();
+
