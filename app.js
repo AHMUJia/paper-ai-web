@@ -35,6 +35,7 @@ const elements = {
   sortImpactBtn: document.getElementById("sortImpactBtn"),
   toggleAllBtn: document.getElementById("toggleAllBtn"),
   exportBtn: document.getElementById("exportBtn"),
+  exportFormat: document.getElementById("exportFormat"),
   statusText: document.getElementById("statusText"),
   paperList: document.getElementById("paperList"),
   heroCountText: document.getElementById("heroCountText"),
@@ -817,8 +818,16 @@ async function enrichSelectedFromPubMed() {
 }
 
 async function exportSelected() {
-  const sel = state.papers.filter(p => state.selected.has(p.id));
+  const selectedIds = new Set(state.selected);
+  if (!selectedIds.size) { updateStatus("请选择要导出的论文。"); return; }
+
+  // 获取排序后的论文列表，然后过滤出选中的论文，保持排序顺序
+  const sortedPapers = getSortedPapers();
+  const sel = sortedPapers.filter(p => selectedIds.has(p.id));
   if (!sel.length) { updateStatus("请选择要导出的论文。"); return; }
+
+  // 获取导出格式
+  const exportFormat = elements.exportFormat?.value || "chinese";
 
   const ensureTitleEndingPunctuation = (title) => {
     const t = String(title || "").trim();
@@ -828,16 +837,35 @@ async function exportSelected() {
     return `${t}.`;
   };
 
-  const formatEntryExport = (paper) => {
+  const formatEntryExport = (paper, format) => {
     const m = resolveMetrics(paper, state.metricMode);
     const authors = (paper.authors || "").replace(/<[^>]+>/g, "");
     const meta = [];
-    if (paper.paperType) meta.push(`[${paper.paperType}]`);
-    if (paper.myAuthorRole) meta.push(paper.myAuthorRole);
-    if (m.impactFactor) meta.push(`IF=${m.impactFactor}`);
-    if (m.jcrZone) meta.push(`JCR ${m.jcrZone}区`);
-    if (m.casZone) meta.push(`中科院${m.casZone}区`);
-    if (m.casTop) meta.push("Top期刊");
+    
+    if (format === "chinese") {
+      // 中文格式：(IF=8.0, JCR Q1区, 中科院1区, Top期刊)
+      if (m.impactFactor) meta.push(`IF=${m.impactFactor}`);
+      if (m.jcrZone) meta.push(`JCR ${m.jcrZone}区`);
+      if (m.casZone) meta.push(`中科院${m.casZone}区`);
+      if (m.casTop) meta.push("Top期刊");
+    } else {
+      // 英文格式：(IF=8.0, JCR Q1)
+      if (m.impactFactor) meta.push(`IF=${m.impactFactor}`);
+      if (m.jcrZone) {
+        // 处理 JCR 分区格式：可能是 "Q1"、"1"、"Q1区" 等
+        let jcrZone = m.jcrZone.replace(/区$/, "").trim();
+        // 如果是纯数字，添加 Q 前缀
+        if (/^\d+$/.test(jcrZone)) {
+          jcrZone = `Q${jcrZone}`;
+        }
+        // 确保以 Q 开头
+        if (!jcrZone.startsWith("Q") && !jcrZone.startsWith("q")) {
+          jcrZone = `Q${jcrZone}`;
+        }
+        meta.push(`JCR ${jcrZone.toUpperCase()}`);
+      }
+    }
+    
     const title = ensureTitleEndingPunctuation(paper.title);
     return `${authors ? authors + "." : ""} ${title} ${paper.journal || ""}, ${paper.year || ""}${paper.volumeIssuePages ? ", " + paper.volumeIssuePages : ""}. ${meta.length ? "(" + meta.join(", ") + ")" : ""}`;
   };
@@ -856,7 +884,7 @@ async function exportSelected() {
 
   try {
     updateStatus("正在导出为 DOCX...");
-    const lines = sel.map(formatEntryExport);
+    const lines = sel.map(paper => formatEntryExport(paper, exportFormat));
 
     const docBody = [
       ...lines.flatMap((line, idx) => {
@@ -904,7 +932,8 @@ async function exportSelected() {
 
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = "整理后论文格式.docx";
+    const formatSuffix = exportFormat === "english" ? "_英文" : "_中文";
+    link.download = `整理后论文格式${formatSuffix}.docx`;
     link.click();
 
     state.workflow.exported = true; updateWorkflowUi();
