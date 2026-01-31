@@ -36,6 +36,7 @@ const elements = {
   toggleAllBtn: document.getElementById("toggleAllBtn"),
   exportBtn: document.getElementById("exportBtn"),
   exportFormat: document.getElementById("exportFormat"),
+  boldNameInput: document.getElementById("boldNameInput"),
   statusText: document.getElementById("statusText"),
   paperList: document.getElementById("paperList"),
   heroCountText: document.getElementById("heroCountText"),
@@ -477,7 +478,7 @@ function formatAuthorsWithMarkers(authors, coFirst, coCorresponding) {
   }).join(", ");
 }
 
-function renderAuthorModal(paperId) {
+function renderAuthorModal(paperId, shouldScroll = false) {
   const paper = state.papers.find(p => p.id === paperId);
   if (!paper || !state.ui.authorEditOpen.has(paperId)) {
     if (elements.authorEditModal) elements.authorEditModal.style.display = "none";
@@ -486,6 +487,10 @@ function renderAuthorModal(paperId) {
   
   const draft = state.ui.authorDraft.get(paperId);
   if (!draft) return;
+  
+  // 保存当前滚动位置（如果模态框已经打开）
+  const authorEditorGrid = elements.authorEditModalBody?.querySelector(".author-editor-grid");
+  const savedScrollTop = authorEditorGrid ? authorEditorGrid.scrollTop : 0;
   
   const rows = draft.baseAuthors.map((name, idx) => {
     const key = normalizeForMatch(name);
@@ -522,11 +527,28 @@ function renderAuthorModal(paperId) {
     </div>
   `;
   
+  const wasHidden = elements.authorEditModal && elements.authorEditModal.style.display === "none";
+  
   if (elements.authorEditModalBody) {
     elements.authorEditModalBody.innerHTML = modalHtml;
+    
+    // 恢复滚动位置（如果不是首次打开）
+    if (!wasHidden && savedScrollTop > 0) {
+      const newAuthorEditorGrid = elements.authorEditModalBody.querySelector(".author-editor-grid");
+      if (newAuthorEditorGrid) {
+        // 使用 setTimeout 确保 DOM 更新完成后再设置滚动位置
+        setTimeout(() => {
+          newAuthorEditorGrid.scrollTop = savedScrollTop;
+        }, 0);
+      }
+    }
   }
   if (elements.authorEditModal) {
     elements.authorEditModal.style.display = "";
+    // 只在首次打开模态框时滚动到顶部
+    if (shouldScroll && wasHidden) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   }
 }
 
@@ -555,6 +577,39 @@ function render() {
     const isEditingAuthors = canMarkAuthors && state.ui.authorEditOpen.has(paper.id);
     const isEditingJournal = state.ui.journalEditOpen.has(paper.id);
     const journalDraft = state.ui.journalDraft.get(paper.id) || paper.journal || "";
+
+    // 生成作者编辑界面（直接在卡片中显示）
+    let authorEditorHtml = "";
+    if (isEditingAuthors) {
+      const draft = state.ui.authorDraft.get(paper.id);
+      if (draft) {
+        const authorItems = draft.baseAuthors.map((name, idx) => {
+          const key = normalizeForMatch(name);
+          const cf = draft.coFirstSet.has(key) ? "checked" : "";
+          const cc = draft.coCorrSet.has(key) ? "checked" : "";
+          return `<div class="author-item-inline">
+            <span class="author-name-inline">${escapeHtml(name)}</span>
+            <label class="author-flag-inline">
+              <input type="checkbox" data-action="authorFlag" data-id="${paper.id}" data-role="cofirst" data-idx="${idx}" ${cf} />
+              <span>共一</span>
+            </label>
+            <label class="author-flag-inline">
+              <input type="checkbox" data-action="authorFlag" data-id="${paper.id}" data-role="cocorr" data-idx="${idx}" ${cc} />
+              <span>通讯</span>
+            </label>
+          </div>`;
+        }).join("");
+        authorEditorHtml = `
+          <div class="author-editor-inline">
+            <div class="author-editor-hint">勾选需要标注的作者（蓝色 # / * 会显示在名单中）</div>
+            <div class="author-list-inline">${authorItems}</div>
+            <div class="author-editor-actions-inline">
+              <button class="btn-mini" data-action="saveAuthorEdit" data-id="${paper.id}"><i class="lucide-check"></i> 保存</button>
+              <button class="btn-mini" data-action="cancelAuthorEdit" data-id="${paper.id}"><i class="lucide-x"></i> 取消</button>
+            </div>
+          </div>`;
+      }
+    }
 
     const hasPubmedError = !isEnriched && paper.pubmed?.error;
     const manualOpen = !isEnriched && state.ui.pubmedManualOpen.has(paper.id);
@@ -587,9 +642,9 @@ function render() {
     }
 
     return `
-      <article class="paper selectable ${isSelected ? "selected" : ""}" data-action="toggleSelect" data-id="${paper.id}">
+      <article class="paper selectable ${isSelected ? "selected" : ""}" data-id="${paper.id}">
         <div class="paper-header">
-          <div class="check" aria-hidden="true"><i class="lucide-check" style="font-size:14px"></i></div>
+          <div class="check" data-action="toggleSelect" data-id="${paper.id}" aria-label="选择/取消选择" style="cursor:pointer;" aria-hidden="false"><i class="lucide-check" style="font-size:14px"></i></div>
           <div style="flex:1">
             <div class="paper-title">
               ${index + 1}. ${paper.title}
@@ -618,6 +673,7 @@ function render() {
               ${hasPubmedError ? `<div class="paper-meta" style="color:var(--fail); font-size:13px; margin-top:4px">${escapeHtml(paper.pubmed.error)}</div>` : ""}
               ${extraActions}
               ${manualBlock}
+              ${authorEditorHtml}
             ` : ""}
           </div>
 
@@ -828,6 +884,10 @@ async function exportSelected() {
 
   // 获取导出格式
   const exportFormat = elements.exportFormat?.value || "chinese";
+  const boldNameRaw = (elements.boldNameInput?.value || "").trim();
+  const boldNames = boldNameRaw
+    ? boldNameRaw.split(/[,\n;，；]+/g).map(s => s.trim()).filter(Boolean)
+    : [];
 
   const ensureTitleEndingPunctuation = (title) => {
     const t = String(title || "").trim();
@@ -837,9 +897,51 @@ async function exportSelected() {
     return `${t}.`;
   };
 
+  const buildBoldMask = (text, needles) => {
+    const mask = new Array(text.length).fill(false);
+    if (!text || !needles?.length) return mask;
+    const lowerText = text.toLowerCase();
+    for (const needle of needles) {
+      const n = String(needle || "").trim();
+      if (!n) continue;
+      const lowerNeedle = n.toLowerCase();
+      let start = 0;
+      while (start < lowerText.length) {
+        const idx = lowerText.indexOf(lowerNeedle, start);
+        if (idx === -1) break;
+        for (let i = idx; i < idx + lowerNeedle.length && i < mask.length; i++) mask[i] = true;
+        start = idx + lowerNeedle.length;
+      }
+    }
+    return mask;
+  };
+
+  const mergeRuns = (runs) => {
+    const out = [];
+    for (const r of runs) {
+      if (!r?.text) continue;
+      const last = out[out.length - 1];
+      if (last && last.bold === r.bold) last.text += r.text;
+      else out.push({ text: r.text, bold: Boolean(r.bold) });
+    }
+    return out;
+  };
+
+  const makeParagraphXmlFromRuns = (runs) => {
+    const makeRun = ({ text, bold }) => {
+      const t = String(text ?? "");
+      if (!t) return "";
+      const pr = bold ? "<w:rPr><w:b/></w:rPr>" : "";
+      return `<w:r>${pr}<w:t xml:space="preserve">${escapeXml(t)}</w:t></w:r>`;
+    };
+    const body = runs.map(makeRun).join("");
+    // 至少输出一个空 run，避免空段落异常（一般不会发生）
+    return `<w:p>${body || "<w:r><w:t xml:space=\"preserve\"></w:t></w:r>"}</w:p>`;
+  };
+
   const formatEntryExport = (paper, format) => {
     const m = resolveMetrics(paper, state.metricMode);
-    const authors = (paper.authors || "").replace(/<[^>]+>/g, "");
+    const authors = (paper.authors || "").replace(/<[^>]+>/g, "").trim();
     const meta = [];
     
     if (format === "chinese") {
@@ -867,7 +969,31 @@ async function exportSelected() {
     }
     
     const title = ensureTitleEndingPunctuation(paper.title);
-    return `${authors ? authors + "." : ""} ${title} ${paper.journal || ""}, ${paper.year || ""}${paper.volumeIssuePages ? ", " + paper.volumeIssuePages : ""}. ${meta.length ? "(" + meta.join(", ") + ")" : ""}`;
+    const main = `${title} ${paper.journal || ""}, ${paper.year || ""}${paper.volumeIssuePages ? ", " + paper.volumeIssuePages : ""}.`;
+    const authorPrefix = authors ? `${authors}. ` : "";
+    const metaParen = meta.length ? `(${meta.join(", ")})` : "";
+
+    // 构造 runs：
+    // - 作者中命中姓名加粗
+    // - 最后括号中的指标整段加粗
+    const runs = [];
+    if (authorPrefix) {
+      const mask = buildBoldMask(authorPrefix, boldNames);
+      let i = 0;
+      while (i < authorPrefix.length) {
+        const bold = mask[i];
+        let j = i + 1;
+        while (j < authorPrefix.length && mask[j] === bold) j++;
+        runs.push({ text: authorPrefix.slice(i, j), bold });
+        i = j;
+      }
+    }
+    runs.push({ text: main, bold: false });
+    if (metaParen) {
+      runs.push({ text: " ", bold: false });
+      runs.push({ text: metaParen, bold: true });
+    }
+    return mergeRuns(runs);
   };
 
   const escapeXml = (s) => String(s ?? "")
@@ -884,13 +1010,13 @@ async function exportSelected() {
 
   try {
     updateStatus("正在导出为 DOCX...");
-    const lines = sel.map(paper => formatEntryExport(paper, exportFormat));
+    const lineRuns = sel.map(paper => formatEntryExport(paper, exportFormat));
 
     const docBody = [
-      ...lines.flatMap((line, idx) => {
-        const parts = [makeParagraphXml(line)];
+      ...lineRuns.flatMap((runs, idx) => {
+        const parts = [makeParagraphXmlFromRuns(runs)];
         // 条目间空一行
-        if (idx < lines.length - 1) parts.push("<w:p/>");
+        if (idx < lineRuns.length - 1) parts.push("<w:p/>");
         return parts;
       }),
       // 页面设置（A4）
@@ -997,90 +1123,14 @@ elements.toggleAllBtn.addEventListener("click", () => {
 });
 elements.exportBtn.addEventListener("click", exportSelected);
 
-// 处理模态框内的事件
-if (elements.authorEditModal) {
-  elements.authorEditModal.addEventListener("click", e => {
-    const actionEl = e.target.closest("[data-action]"); const action = actionEl?.dataset?.action; const id = actionEl?.dataset?.id;
-    
-    // 处理复选框点击
-    if (action === "authorFlag" && id) {
-      const draft = state.ui.authorDraft.get(id); 
-      if (!draft) return;
-      const idx = Number(actionEl.dataset.idx); 
-      const role = actionEl.dataset.role;
-      const key = normalizeForMatch(draft.baseAuthors[idx]);
-      if (role === "cofirst") { 
-        if (actionEl.checked) draft.coFirstSet.add(key); 
-        else draft.coFirstSet.delete(key); 
-      } else { 
-        if (actionEl.checked) draft.coCorrSet.add(key); 
-        else draft.coCorrSet.delete(key); 
-      }
-      const p = state.papers.find(x => x.id === id);
-      if (p && draft) {
-        const cf = draft.baseAuthors.filter(n => draft.coFirstSet.has(normalizeForMatch(n)));
-        const cc = draft.baseAuthors.filter(n => draft.coCorrSet.has(normalizeForMatch(n)));
-        p.authors = formatAuthorsWithMarkers(draft.baseAuthors, cf, cc);
-        renderAuthorModal(id);
-      }
-      e.stopPropagation();
-      return;
-    }
-    
-    // 处理保存按钮
-    if (action === "saveAuthorEdit" && id) {
-      const p = state.papers.find(x => x.id === id);
-      if (p) {
-        const draft = state.ui.authorDraft.get(id);
-        if (draft) {
-          const cf = draft.baseAuthors.filter(n => draft.coFirstSet.has(normalizeForMatch(n)));
-          const cc = draft.baseAuthors.filter(n => draft.coCorrSet.has(normalizeForMatch(n)));
-          p.authors = formatAuthorsWithMarkers(draft.baseAuthors, cf, cc);
-          p.pubmed = p.pubmed || {};
-          p.pubmed.coFirst = cf;
-          p.pubmed.coCorresponding = cc;
-        }
-      }
-      state.ui.authorEditOpen.delete(id);
-      state.ui.authorDraft.delete(id);
-      if (elements.authorEditModal) elements.authorEditModal.style.display = "none";
-      render();
-      e.stopPropagation();
-      return;
-    }
-    
-    // 处理取消按钮
-    if (action === "cancelAuthorEdit" && id) {
-      state.ui.authorEditOpen.delete(id);
-      state.ui.authorDraft.delete(id);
-      if (elements.authorEditModal) elements.authorEditModal.style.display = "none";
-      render();
-      e.stopPropagation();
-      return;
-    }
-    
-    // 处理关闭按钮
-    if (action === "closeAuthorModal") {
-      const openId = state.ui.authorEditOpen.values().next().value;
-      if (openId) {
-        state.ui.authorEditOpen.delete(openId);
-        state.ui.authorDraft.delete(openId);
-      }
-      if (elements.authorEditModal) elements.authorEditModal.style.display = "none";
-      render();
-      e.stopPropagation();
-      return;
-    }
-  });
-}
+// 模态框相关代码已移除，事件在 paperList 中处理
 
 elements.paperList.addEventListener("click", e => {
   const actionEl = e.target.closest("[data-action]"); const action = actionEl?.dataset?.action; const id = actionEl?.dataset?.id;
-  // 处理选择逻辑：只有点击 paper 元素本身（不是按钮等交互元素）时才切换选择
+  // 处理选择逻辑：只有点击左上角圆点（.check）时才切换选择
   if (action === "toggleSelect") {
-    const card = e.target.closest(".paper"); const cid = card?.dataset?.id;
-    if (e.target.closest("button") || e.target.closest("input") || e.target.closest("select") || e.target.closest("a")) return;
-    if (cid && state.selected.has(cid)) state.selected.delete(cid); else if (cid) state.selected.add(cid);
+    if (id && state.selected.has(id)) state.selected.delete(id);
+    else if (id) state.selected.add(id);
     render(); return;
   }
   // 处理其他 action（如 markAuthors 等）
@@ -1091,15 +1141,35 @@ elements.paperList.addEventListener("click", e => {
       // 如果已经打开，则关闭
       state.ui.authorEditOpen.delete(id);
       state.ui.authorDraft.delete(id);
-      if (elements.authorEditModal) elements.authorEditModal.style.display = "none";
     } else {
-      // 打开模态框
+      // 打开编辑界面
       state.ui.authorEditOpen.add(id);
       const authors = (p.pubmed?.fullAuthors?.length ? [...p.pubmed.fullAuthors] : (p.authors || "").replace(/<[^>]+>/g, "").split(",").map(s => s.trim().replace(/[#*]+$/g, "")).filter(Boolean));
       state.ui.authorDraft.set(id, { baseAuthors: authors, coFirstSet: new Set((p.pubmed?.coFirst || []).map(normalizeForMatch)), coCorrSet: new Set((p.pubmed?.coCorresponding || []).map(normalizeForMatch)) });
-      renderAuthorModal(id);
     }
     render(); return;
+  }
+  if (action === "authorFlag") {
+    const draft = state.ui.authorDraft.get(id);
+    if (!draft) return;
+    const idx = Number(actionEl.dataset.idx);
+    const role = actionEl.dataset.role;
+    const key = normalizeForMatch(draft.baseAuthors[idx]);
+    if (role === "cofirst") {
+      if (actionEl.checked) draft.coFirstSet.add(key);
+      else draft.coFirstSet.delete(key);
+    } else {
+      if (actionEl.checked) draft.coCorrSet.add(key);
+      else draft.coCorrSet.delete(key);
+    }
+    const p = state.papers.find(x => x.id === id);
+    if (p && draft) {
+      const cf = draft.baseAuthors.filter(n => draft.coFirstSet.has(normalizeForMatch(n)));
+      const cc = draft.baseAuthors.filter(n => draft.coCorrSet.has(normalizeForMatch(n)));
+      p.authors = formatAuthorsWithMarkers(draft.baseAuthors, cf, cc);
+    }
+    render(); // 重新渲染以更新显示
+    return;
   }
   if (action === "editJournal") {
     const p = state.papers.find(x => x.id === id); if (!p) return;
@@ -1158,6 +1228,30 @@ elements.paperList.addEventListener("click", e => {
     })();
     return;
   }
+  if (action === "saveAuthorEdit") {
+    const p = state.papers.find(x => x.id === id);
+    if (p) {
+      const draft = state.ui.authorDraft.get(id);
+      if (draft) {
+        const cf = draft.baseAuthors.filter(n => draft.coFirstSet.has(normalizeForMatch(n)));
+        const cc = draft.baseAuthors.filter(n => draft.coCorrSet.has(normalizeForMatch(n)));
+        p.authors = formatAuthorsWithMarkers(draft.baseAuthors, cf, cc);
+        p.pubmed = p.pubmed || {};
+        p.pubmed.coFirst = cf;
+        p.pubmed.coCorresponding = cc;
+      }
+    }
+    state.ui.authorEditOpen.delete(id);
+    state.ui.authorDraft.delete(id);
+    render(); 
+    return;
+  }
+  if (action === "cancelAuthorEdit") {
+    state.ui.authorEditOpen.delete(id);
+    state.ui.authorDraft.delete(id);
+    render(); 
+    return;
+  }
 });
 
 elements.paperList.addEventListener("input", (e) => {
@@ -1198,35 +1292,7 @@ elements.paperList.addEventListener("keydown", (e) => {
   }
 });
 
-// 模态框背景点击关闭处理（单独的事件监听器）
-if (elements.authorEditModal) {
-  // 点击背景关闭模态框
-  const backdrop = elements.authorEditModal.querySelector(".modal-backdrop");
-  if (backdrop) {
-    backdrop.addEventListener("click", (e) => {
-      const openId = state.ui.authorEditOpen.values().next().value;
-      if (openId) {
-        state.ui.authorEditOpen.delete(openId);
-        state.ui.authorDraft.delete(openId);
-      }
-      elements.authorEditModal.style.display = "none";
-      render();
-    });
-  }
-  
-  // ESC 键关闭模态框
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && elements.authorEditModal && elements.authorEditModal.style.display !== "none") {
-      const openId = state.ui.authorEditOpen.values().next().value;
-      if (openId) {
-        state.ui.authorEditOpen.delete(openId);
-        state.ui.authorDraft.delete(openId);
-      }
-      elements.authorEditModal.style.display = "none";
-      render();
-    }
-  });
-}
+// 模态框相关代码已移除，现在使用内联编辑界面
 
 async function loadBuiltinMetrics() {
   try {

@@ -209,6 +209,21 @@ header p {
   background: transparent;
 }
 
+.input-group input {
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-weight: 700;
+  color: var(--text-main);
+  font-size: 15px;
+  min-width: 240px;
+}
+
+.input-group input::placeholder {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
 .button {
   border: 0;
   border-radius: 14px;
@@ -289,11 +304,11 @@ header p {
   display: grid;
   gap: 16px;
   position: relative;
-  cursor: pointer;
+  cursor: default;
 }
 .paper:hover {
-  border-color: var(--primary);
-  box-shadow: var(--shadow-lg);
+  border-color: var(--border);
+  box-shadow: var(--shadow);
 }
 .paper.selected {
   border-color: var(--primary);
@@ -316,10 +331,21 @@ header p {
   justify-content: center;
   flex-shrink: 0;
   color: white;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.paper .check:hover {
+  border-color: var(--primary);
+  background: rgba(14, 165, 233, 0.1);
+  transform: scale(1.1);
 }
 .paper.selected .check {
   background: var(--primary);
   border-color: var(--primary);
+}
+.paper.selected .check:hover {
+  background: var(--primary-dark);
+  border-color: var(--primary-dark);
 }
 .paper-title {
   font-size: 18px;
@@ -523,8 +549,10 @@ header p {
   bottom: 0;
   z-index: 1000;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
+  padding-top: 40px;
+  overflow-y: auto;
   animation: fadeIn 0.2s ease;
 }
 
@@ -546,10 +574,11 @@ header p {
   box-shadow: var(--shadow-lg);
   max-width: 600px;
   width: 90%;
-  max-height: 80vh;
+  max-height: calc(100vh - 80px);
+  margin-bottom: 40px;
   display: flex;
   flex-direction: column;
-  animation: slideUp 0.3s ease;
+  animation: slideDown 0.3s ease;
   z-index: 1001;
 }
 
@@ -683,4 +712,92 @@ header p {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 内联作者编辑器样式（直接在卡片中显示） */
+.author-editor-inline {
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--bg-page);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
+.author-editor-hint {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+
+.author-list-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  margin-bottom: 12px;
+}
+
+.author-item-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: white;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  transition: all 0.2s ease;
+}
+
+.author-item-inline:hover {
+  border-color: var(--primary);
+  box-shadow: 0 2px 4px rgba(14, 165, 233, 0.1);
+}
+
+.author-name-inline {
+  font-weight: 600;
+  color: var(--text-main);
+  white-space: nowrap;
+}
+
+.author-flag-inline {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+  user-select: none;
+  white-space: nowrap;
+}
+
+.author-flag-inline input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--primary);
+  flex-shrink: 0;
+}
+
+.author-flag-inline:hover {
+  color: var(--primary);
+}
+
+.author-editor-actions-inline {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
 }
