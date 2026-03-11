@@ -897,6 +897,57 @@ async function exportSelected() {
     return `${t}.`;
   };
 
+  const compareAuthorKey = (name) => normalizeForMatch(String(name || "").replace(/[#*]+$/g, ""));
+
+  const getAuthorOrder = (paper) => {
+    if (paper?.pubmed?.fullAuthors?.length) return [...paper.pubmed.fullAuthors].map((n) => String(n || "").trim()).filter(Boolean);
+    const flat = (paper?.authors || "").replace(/<[^>]+>/g, "");
+    return flat.split(",").map((s) => String(s || "").trim().replace(/[#*]+$/g, "")).filter(Boolean);
+  };
+
+  const getRoleInfoForTarget = (paper) => {
+    if (!boldNames.length) return "";
+
+    const authorOrder = getAuthorOrder(paper);
+    if (!authorOrder.length) return "";
+
+    const target = boldNames
+      .map(compareAuthorKey)
+      .find((k) => authorOrder.map(compareAuthorKey).includes(k));
+    if (!target) return "";
+
+    const coFirstKeys = new Set((paper?.pubmed?.coFirst || []).map(compareAuthorKey));
+    const coCorrKeys = new Set((paper?.pubmed?.coCorresponding || []).map(compareAuthorKey));
+    const orderedCoFirst = authorOrder.filter((n) => coFirstKeys.has(compareAuthorKey(n)));
+    const orderedCoCorr = authorOrder.filter((n) => coCorrKeys.has(compareAuthorKey(n)));
+
+    const labels = [];
+    if (coFirstKeys.has(target)) {
+      if (orderedCoFirst.length <= 1) {
+        labels.push("第一作者");
+      } else {
+        const rank = orderedCoFirst.findIndex((n) => compareAuthorKey(n) === target) + 1;
+        labels.push(rank === 1 ? "共同一作排名第一" : `共同一作排名第${rank}`);
+      }
+    }
+    if (coCorrKeys.has(target)) {
+      if (orderedCoCorr.length <= 1) {
+        labels.push("通讯作者");
+      } else {
+        // 通讯作者排名按作者列表“倒序”计算：越靠后排名越靠前
+        const idxFromStart = orderedCoCorr.findIndex((n) => compareAuthorKey(n) === target);
+        const rank = idxFromStart === -1 ? 0 : (orderedCoCorr.length - idxFromStart);
+        labels.push(rank === 1 ? "共同通讯排名第一" : `共同通讯排名第${rank}`);
+      }
+    }
+
+    // 如果同时是第一作者和通讯作者，合并为“第一作者/通讯作者”更清晰
+    if (labels.includes("第一作者") && labels.includes("通讯作者")) {
+      return labels.filter((x) => x !== "第一作者" && x !== "通讯作者").concat(["第一作者/通讯作者"]).join("、");
+    }
+    return labels.join("、");
+  };
+
   const buildBoldMask = (text, needles) => {
     const mask = new Array(text.length).fill(false);
     if (!text || !needles?.length) return mask;
@@ -946,6 +997,8 @@ async function exportSelected() {
     
     if (format === "chinese") {
       // 中文格式：(IF=8.0, JCR Q1区, 中科院1区, Top期刊)
+      const roleInfo = getRoleInfoForTarget(paper);
+      if (roleInfo) meta.push(roleInfo);
       if (m.impactFactor) meta.push(`IF=${m.impactFactor}`);
       if (m.jcrZone) meta.push(`JCR ${m.jcrZone}区`);
       if (m.casZone) meta.push(`中科院${m.casZone}区`);
@@ -971,7 +1024,9 @@ async function exportSelected() {
     const title = ensureTitleEndingPunctuation(paper.title);
     const main = `${title} ${paper.journal || ""}, ${paper.year || ""}${paper.volumeIssuePages ? ", " + paper.volumeIssuePages : ""}.`;
     const authorPrefix = authors ? `${authors}. ` : "";
-    const metaParen = meta.length ? `(${meta.join(", ")})` : "";
+    const metaParen = meta.length
+      ? (format === "chinese" ? `（${meta.join("，")}）` : `(${meta.join(", ")})`)
+      : "";
 
     // 构造 runs：
     // - 作者中命中姓名加粗
